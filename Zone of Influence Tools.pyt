@@ -538,6 +538,5 @@ class RasterProcessing(object):
         idw_result = arcpy.CopyRaster_management(idw_result, output_raster)[0]
 
         arcpy.Delete_management("in_memory")
-        # [arcpy.Delete_management(_) for _ in temp_rasters] 
 
         return idw_result
