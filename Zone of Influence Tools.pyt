@@ -65,10 +65,20 @@ class ProcessModelData(object):
         )
         junctions_feature.filter.list = ["Point"]
 
+        full_features = arcpy.Parameter(
+            displayName="Process Daily Data",
+            name="daily_flag",
+            datatype="GPBoolean",
+            parameterType="Required",
+            direction="Input",
+        )
+        full_features.value = False
+
         params = [
             working_folder,
             model_output_directory,
-            junctions_feature
+            junctions_feature,
+            full_features
         ]
         return params
 
@@ -89,15 +99,19 @@ class ProcessModelData(object):
 
     def execute(self, parameters, messages):
         """The source code of the tool."""
-        _fld, _mdl_out, _jct = [_.valueAsText for _ in parameters]
-        self.do_work(_fld, _mdl_out, _jct)
+        _fld, _mdl_out, _jct, _daily = [_.valueAsText for _ in parameters]
+        _daily = True if _daily == 'true' else False
+
+        self.do_work(_fld, _mdl_out, _jct, _daily)
         return
 
-    def do_work(self, _folder, _model_output_directory, _junctions_feature):
+    def do_work(self, _folder, _model_output_directory, _junctions_feature, daily_feature=None):
         _folder = Path(_folder)
         _model_output_directory = Path(_model_output_directory)
         _junctions_feature = Path(_junctions_feature)
         
+        daily_feature = True if daily_feature is True else False
+
         self.start_time = datetime.datetime.now()
         arcpy.AddMessage("Start: {}".format(self.start_time.strftime("%Y-%m-%d %H:%M:%S")))
 
@@ -112,7 +126,7 @@ class ProcessModelData(object):
         for i, _name in enumerate(dbf_files, 1):
             arcpy.AddMessage("Loading DBF: {} of {}".format(i, len(dbf_files)))
             _dbf_path = dbf_files[_name]
-            results += self.process_dbf(gdb, junction_dataframe, _name, _dbf_path)
+            results += self.process_dbf(gdb, junction_dataframe, _name, _dbf_path, daily_feature)
         return results
 
     def create_run_folder(self, _fld):
@@ -150,20 +164,30 @@ class ProcessModelData(object):
             if _.name == "JunctOut.dbf":
                 return _
 
-    def process_dbf(self, _gdb, _junctions, _name, _dbf_path):
+    def process_dbf(self, _gdb, _junctions, _name, _dbf_path, _daily):
+        _all = None
+        _avg = None
+
         scen_df = self.load_dbf(_dbf_path)
         scen_avg_df = self.average_scenario(scen_df)
-        df = self.join_junction_scenario(
-            _junctions,
-            scen_df
-        )
-        avg_df = self.join_junction_scenario(
-            _junctions,
-            scen_avg_df
-        )
-        _all = self.save_to_gdb(df, _gdb, "{}".format(_name))
-        _avg = self.save_to_gdb(avg_df, _gdb, "{}_AVG".format(_name))
-        return [_all, _avg]
+
+        if _daily:
+            arcpy.AddMessage("Processing Daily Data")
+            df = self.join_junction_scenario(
+                _junctions,
+                scen_df
+            )
+            _all = self.save_to_gdb(df, _gdb, "{}".format(_name))
+        else:
+            arcpy.AddMessage("Processing Average Data")
+            avg_df = self.join_junction_scenario(
+                _junctions,
+                scen_avg_df
+            )
+            _avg = self.save_to_gdb(avg_df, _gdb, "{}_AVG".format(_name))
+
+        results = [_all, _avg]
+        return [_ for _ in results if _ is not None]
 
     def load_dbf(self, _dbf):
         arcpy.AddMessage("Loading DBF {} to Dataframe".format(_dbf))
@@ -309,7 +333,7 @@ class GenerateRasters(object):
     def do_work(self, working_folder, input_gdb, clip_feature=None, processing_field=None, cell_size=None, suffix=None):
         assert arcpy.CheckExtension("3D") == "Available"
         self.start_time = datetime.datetime.now()
-        arcpy.AddMessage("Start: {}".format(self.start_time.strftime("%Y-%m-%s %H:%M:%S")))
+        arcpy.AddMessage("Start: {}".format(self.start_time.strftime("%Y-%m-%d %H:%M:%S")))
 
         scenarios = self.get_scenarios(input_gdb)
         temp_dir = self.create_temp_folder(working_folder)
@@ -318,7 +342,8 @@ class GenerateRasters(object):
         out_gdb = self.create_output_gdb("Rasters", working_folder)
 
         rasters = [RasterProcessing(_) for _ in scenario_folders]
-        for raster in rasters:
+        for i, raster in enumerate(rasters, 1):
+            arcpy.AddMessage("Raster {} of {}".format(i, len(rasters)))
             raster.process_raster(
                 scenario_name=raster.scenario_name,
                 processing_field=processing_field,
@@ -341,7 +366,8 @@ class GenerateRasters(object):
         arcpy.AddMessage("Generating Scenario folders at {}".format(_folder))
         arcpy.AddMessage("{} scenarios located".format(len(scenarios)))
         scenario_folders = []
-        for scenarios_name in scenarios:
+        for i, scenarios_name in enumerate(scenarios, 1):
+            arcpy.AddMessage("Scenario {} of {}".format(i, len(scenarios)))
             scenario = self.generate_scenario(
                 scenarios_name,
                 scenarios[scenarios_name],
